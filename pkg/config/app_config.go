@@ -13,6 +13,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,10 @@ type UserConfig struct {
 
 	// Logs determines how we render/filter a container's logs
 	Logs LogsConfig `yaml:"logs,omitempty"`
+
+	// ContainerEngine determines which container engine to use: "docker" or "podman"
+	// If not specified, it defaults to "docker"
+	ContainerEngine string `yaml:"containerEngine,omitempty"`
 
 	// CommandTemplates determines what commands actually get called when we run
 	// certain commands
@@ -384,6 +389,7 @@ func GetDefaultConfig() UserConfig {
 			Since:      "60m",
 			Tail:       "",
 		},
+		ContainerEngine: "docker",
 		CommandTemplates: CommandTemplatesConfig{
 			DockerCompose:            "docker compose",
 			RestartService:           "{{ .DockerCompose }} restart {{ .Service.Name }}",
@@ -507,6 +513,9 @@ func NewAppConfig(name, version, commit, date string, buildSource string, debugg
 		userConfig.CommandTemplates.DockerCompose += " -f " + strings.Join(composeFiles, " -f ")
 	}
 
+	// Container engine auto-detection will happen in commands/docker.go after OSCommand is initialized
+	// We only set it here if an explicit value is defined in the config, otherwise leave as default
+
 	appConfig := &AppConfig{
 		Name:        name,
 		Version:     version,
@@ -517,6 +526,18 @@ func NewAppConfig(name, version, commit, date string, buildSource string, debugg
 		UserConfig:  userConfig,
 		ConfigDir:   configDir,
 		ProjectDir:  projectDir,
+	}
+
+	// Check for environment variable override
+	if engineEnv := os.Getenv("LAZYDOCKER_CONTAINER_ENGINE"); engineEnv != "" {
+		if engineEnv == "docker" || engineEnv == "podman" {
+			userConfig.ContainerEngine = engineEnv
+			fmt.Printf("Setting container engine from environment variable: %s\n", engineEnv)
+		} else {
+			fmt.Printf("Invalid container engine specified in environment variable: %s\n", engineEnv)
+		}
+	} else {
+		fmt.Printf("No LAZYDOCKER_CONTAINER_ENGINE environment variable found\n")
 	}
 
 	return appConfig, nil

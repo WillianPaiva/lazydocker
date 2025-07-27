@@ -60,6 +60,11 @@ gui:
   # containers panel. "long": full words (default), "short": one or two characters,
   # "icon": unicode emoji.
   containerStatusHealthStyle: "long"
+# Determines which container engine to use: "docker" or "podman"
+# If not specified, lazydocker will auto-detect the available engine
+# Can also be set using the LAZYDOCKER_CONTAINER_ENGINE environment variable
+# On macOS with Podman, lazydocker will automatically try to connect to the Podman machine
+containerEngine: "docker" # one of 'docker' | 'podman'
 logs:
   timestamps: false
   since: '60m' # set to '' to show all logs

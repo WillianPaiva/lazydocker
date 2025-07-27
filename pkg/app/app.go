@@ -77,6 +77,14 @@ func (app *App) KnownError(err error) (string, bool) {
 			originalError: "Got permission denied while trying to connect to the Docker daemon socket",
 			newError:      app.Tr.CannotAccessDockerSocketError,
 		},
+		{
+			originalError: "permission denied",
+			newError:      app.Tr.CannotAccessDockerSocketError,
+		},
+		{
+			originalError: "connect: no such file or directory",
+			newError:      "Cannot connect to container engine socket. Make sure the container engine (Docker/Podman) is running.",
+		},
 	}
 
 	for _, mapping := range mappings {

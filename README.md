@@ -307,6 +307,21 @@ By default we only show logs from the last hour, so that we're not putting too m
 
 If you are running lazydocker in Docker container, it is a know bug, that you can't see logs or CPU usage.
 
+### Does lazydocker work with Podman?
+
+Yes! As of the latest version, lazydocker supports Podman as an alternative container engine. You can configure it in several ways:
+
+1. Let lazydocker auto-detect which container engine is available (it will use Docker by default if both are available)
+2. Set the `containerEngine: "podman"` option in your config file
+3. Use the environment variable: `LAZYDOCKER_CONTAINER_ENGINE=podman lazydocker`
+
+Lazydocker will automatically detect the appropriate socket path for Podman based on your environment:
+
+- On Linux: automatically finds system socket or user socket (rootless mode)
+- On macOS: automatically connects to the Podman machine using the appropriate method
+
+For the best experience on macOS, make sure your Podman machine is running (`podman machine start`) before starting lazydocker.
+
 ## Alternatives
 
 - [docui](https://github.com/skanehira/docui) - Skanehira beat me to the punch on making a docker terminal UI, so definitely check out that repo as well! I think the two repos can live in harmony though: lazydocker is more about managing existing containers/services, and docui is more about creating and configuring them.

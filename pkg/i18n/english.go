@@ -154,11 +154,11 @@ func englishSet() TranslationSet {
 		NoViewMachingNewLineFocusedSwitchStatement: "No view matching newLineFocused switch statement",
 
 		ErrorOccurred:                     "An error occurred! Please create an issue at https://github.com/jesseduffield/lazydocker/issues",
-		ConnectionFailed:                  "connection to docker client failed. You may need to restart the docker client",
+		ConnectionFailed:                  "connection to container engine client failed. You may need to restart the container engine service",
 		UnattachableContainerError:        "Container does not support attaching. You must either run the service with the '-it' flag or use `stdin_open: true, tty: true` in the docker-compose.yml file",
-		WaitingForContainerInfo:           "Cannot proceed until docker gives us more information about the container. Please retry in a few moments.",
+		WaitingForContainerInfo:           "Cannot proceed until the container engine gives us more information about the container. Please retry in a few moments.",
 		CannotAttachStoppedContainerError: "You cannot attach to a stopped container, you need to start it first (which you can actually do with the 'r' key) (yes I'm too lazy to do this automatically for you) (pretty cool that I get to communicate one-on-one with you in the form of an error message though)",
-		CannotAccessDockerSocketError:     "Can't access docker socket at: unix:///var/run/docker.sock\nRun lazydocker as root or read https://docs.docker.com/install/linux/linux-postinstall/",
+		CannotAccessDockerSocketError:     "Can't access container engine socket. This could be a permissions issue.\nRun lazydocker as root or read https://docs.docker.com/install/linux/linux-postinstall/ (for Docker) or https://podman.io/docs/installation (for Podman)",
 		CannotKillChildError:              "Waited three seconds for child process to stop. There may be an orphan process that continues to run on your system.",
 
 		Donate:  "Donate",
@@ -232,7 +232,7 @@ func englishSet() TranslationSet {
 		LogsTitle:                 "Logs",
 		ConfigTitle:               "Config",
 		EnvTitle:                  "Env",
-		DockerComposeConfigTitle:  "Docker-Compose Config",
+		DockerComposeConfigTitle:  "Compose Config",
 		TopTitle:                  "Top",
 		StatsTitle:                "Stats",
 		CreditsTitle:              "About",

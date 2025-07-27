@@ -99,8 +99,14 @@ func (c *Container) Attach() (*exec.Cmd, error) {
 	}
 
 	c.Log.Warn(fmt.Sprintf("attaching to container %s", c.Name))
-	// TODO: use SDK
-	cmd := c.OSCommand.NewCmd("docker", "attach", "--sig-proxy=false", c.ID)
+	
+	// Use the appropriate container engine command
+	engineCmd := "docker"
+	if c.DockerCommand != nil && c.DockerCommand.(*DockerCommand).Config.UserConfig.ContainerEngine == "podman" {
+		engineCmd = "podman"
+	}
+	
+	cmd := c.OSCommand.NewCmd(engineCmd, "attach", "--sig-proxy=false", c.ID)
 	return cmd, nil
 }
 

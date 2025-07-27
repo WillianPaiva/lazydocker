@@ -9,6 +9,7 @@ import (
 	ogLog "log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -73,16 +74,133 @@ func (c *DockerCommand) NewCommandObject(obj CommandObject) CommandObject {
 
 // NewDockerCommand it runs docker commands
 func NewDockerCommand(log *logrus.Entry, osCommand *OSCommand, tr *i18n.TranslationSet, config *config.AppConfig, errorChan chan error) (*DockerCommand, error) {
-	dockerHost, err := determineDockerHost()
-	if err != nil {
-		ogLog.Printf("> could not determine host %v", err)
+	var engineHost string
+	var err error
+
+	// Determine which container engine to use
+	containerEngine := config.UserConfig.ContainerEngine
+	log.Info("Container engine from config: " + containerEngine)
+	
+	// If container engine is not explicitly set, detect it
+	if containerEngine == "" {
+		containerEngine = DetectContainerEngine(osCommand)
+		log.Info("Auto-detected container engine: " + containerEngine)
+		config.UserConfig.ContainerEngine = containerEngine
+	} else {
+		log.Info("Using container engine from config: " + containerEngine)
+	}
+	
+	// Determine appropriate host based on container engine
+	if containerEngine == "podman" {
+		// On macOS, check if the podman machine is running
+		if runtime.GOOS == "darwin" {
+			// First check if podman is installed
+			isPodmanInstalled := osCommand.RunCommand("which podman") == nil
+			if !isPodmanInstalled {
+				log.Warn("Podman doesn't appear to be installed. Please install Podman first.")
+				fmt.Println("Podman not found. Install with: brew install podman")
+			} else {
+				// Check if podman machine is running
+				machineStatus, err := osCommand.RunCommandWithOutput("podman machine list --format json")
+				if err == nil && strings.Contains(machineStatus, "\"Running\":true") {
+					fmt.Println("Podman machine is running")
+					
+					// Set up a TCP connection for the Podman API (this is more reliable on macOS)
+					// First, check if podman machine is responsive
+					cmd := exec.Command("podman", "machine", "inspect")
+					_, err = cmd.CombinedOutput()
+					
+					// Try to set up port forwarding for the Podman API
+					// This works for some Podman versions, may not work for all
+					portCmd := exec.Command("podman", "machine", "ssh", "sudo", "systemctl", "restart", "podman.socket")
+					_, err = portCmd.CombinedOutput()
+					if err != nil {
+						fmt.Println("Could not restart podman.socket in the VM. This is normal for some Podman versions.")
+					}
+					
+					// Try to set up direct access via podman-mac-helper (if available)
+					helperCmd := exec.Command("which", "podman-mac-helper")
+					helperOutput, helperErr := helperCmd.CombinedOutput()
+					if helperErr == nil && len(helperOutput) > 0 {
+						fmt.Println("Found podman-mac-helper, setting up direct connection")
+						// Get the path to the socket from the helper
+						socketCmd := exec.Command("podman-mac-helper", "socket")
+						socketOutput, socketErr := socketCmd.CombinedOutput()
+						if socketErr == nil && len(socketOutput) > 0 {
+							socketPath := strings.TrimSpace(string(socketOutput))
+							fmt.Printf("Using socket path from podman-mac-helper: %s\n", socketPath)
+							os.Setenv("DOCKER_HOST", "unix://"+socketPath)
+						}
+					} else {
+						// Try to directly connect to the VM's Docker API
+						fmt.Println("Using direct connection to Podman machine")
+						
+						// Try to get socket path directly from machine inspect
+						socketCmd := exec.Command("podman", "machine", "inspect", "--format", "{{.ConnectionInfo.PodmanSocket.Path}}")
+						socketOutput, socketErr := socketCmd.CombinedOutput()
+						if socketErr == nil && len(socketOutput) > 0 {
+							socketPath := strings.TrimSpace(string(socketOutput))
+							if socketPath != "" {
+								fmt.Printf("Found Podman socket via machine inspect: %s\n", socketPath)
+								os.Setenv("DOCKER_HOST", "unix://" + socketPath)
+							}
+						}
+						
+						// For newer versions of Podman on macOS, use TCP connection to VM's IP
+						// First, get the VM's IP address
+						ipCmd := exec.Command("podman", "machine", "inspect", "--format", "{{.Host.CurrentIP}}")
+						ipOutput, ipErr := ipCmd.CombinedOutput()
+						if ipErr == nil && len(ipOutput) > 0 {
+							vmIP := strings.TrimSpace(string(ipOutput))
+							if vmIP != "" {
+								fmt.Printf("Found Podman VM IP: %s\n", vmIP)
+								// Use the Docker API port (2375/2376)
+								os.Setenv("DOCKER_HOST", fmt.Sprintf("tcp://%s:2375", vmIP))
+							} else {
+								// Fallback to localhost with port mapping
+								fmt.Println("Could not determine VM IP, using localhost:8080")
+								os.Setenv("DOCKER_HOST", "tcp://localhost:8080")
+							}
+						} else {
+							// Fallback to default Docker socket (just in case there's a compatibility layer)
+							fmt.Println("Using default Docker socket as fallback")
+							os.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+						}
+					}
+				} else {
+					log.Warn("Podman machine doesn't appear to be running. Start it with: podman machine start")
+					fmt.Println("Podman machine not running. Try: podman machine start")
+				}
+			}
+		} else {
+			// On Linux, check if podman socket service is running
+			systemctlErr := osCommand.RunCommand("systemctl --user is-active --quiet podman.socket")
+			if systemctlErr != nil {
+				log.Warn("Podman socket service doesn't appear to be running. You may need to run: systemctl --user start podman.socket")
+				fmt.Println("Podman socket service not running. Try: systemctl --user start podman.socket")
+			} else {
+				fmt.Println("Podman socket service is running")
+			}
+		}
+		
+		engineHost = GetDefaultPodmanHost()
+		log.Info("Using Podman container engine with host: " + engineHost)
+		fmt.Println("Using Podman container engine with host: " + engineHost)
+	} else {
+		// Default to Docker
+		engineHost, err = determineDockerHost()
+		if err != nil {
+			ogLog.Printf("> could not determine docker host %v", err)
+		}
+		log.Info("Using Docker container engine with host: " + engineHost)
+		fmt.Println("Using Docker container engine with host: " + engineHost)
 	}
 
-	// NOTE: Inject the determined docker host to the environment. This allows the
+	// NOTE: Inject the determined host to the environment. This allows the
 	//       `SSHHandler.HandleSSHDockerHost()` to create a local unix socket tunneled
 	//       over SSH to the specified ssh host.
-	if strings.HasPrefix(dockerHost, "ssh://") {
-		os.Setenv(dockerHostEnvKey, dockerHost)
+	if strings.HasPrefix(engineHost, "ssh://") {
+		os.Setenv(dockerHostEnvKey, engineHost)
 	}
 
 	tunnelCloser, err := ssh.NewSSHHandler(osCommand).HandleSSHDockerHost()
@@ -91,13 +209,14 @@ func NewDockerCommand(log *logrus.Entry, osCommand *OSCommand, tr *i18n.Translat
 	}
 
 	// Retrieve the docker host from the environment which could have been set by
-	// the `SSHHandler.HandleSSHDockerHost()` and override `dockerHost`.
+	// the `SSHHandler.HandleSSHDockerHost()` and override `engineHost`.
 	dockerHostFromEnv := os.Getenv(dockerHostEnvKey)
 	if dockerHostFromEnv != "" {
-		dockerHost = dockerHostFromEnv
+		engineHost = dockerHostFromEnv
 	}
 
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithVersion(APIVersion), client.WithHost(dockerHost))
+	// Create client using the appropriate host (Docker or Podman socket)
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithVersion(APIVersion), client.WithHost(engineHost))
 	if err != nil {
 		ogLog.Fatal(err)
 	}
@@ -130,14 +249,41 @@ func NewDockerCommand(log *logrus.Entry, osCommand *OSCommand, tr *i18n.Translat
 }
 
 func (c *DockerCommand) setDockerComposeCommand(config *config.AppConfig) {
-	if config.UserConfig.CommandTemplates.DockerCompose != "docker compose" {
-		return
-	}
+	containerEngine := config.UserConfig.ContainerEngine
+	
+	// Set default based on the selected container engine
+	if containerEngine == "podman" {
+		// If using Podman, use "podman-compose" by default
+		if config.UserConfig.CommandTemplates.DockerCompose == "docker compose" {
+			// Check if podman-compose is available
+			err := c.OSCommand.RunCommand("podman-compose --version")
+			if err == nil {
+				config.UserConfig.CommandTemplates.DockerCompose = "podman-compose"
+				c.Log.Info("Using podman-compose as compose command")
+			} else {
+				// Fallback to regular podman compose if supported
+				err := c.OSCommand.RunCommand("podman compose --version")
+				if err == nil {
+					config.UserConfig.CommandTemplates.DockerCompose = "podman compose"
+					c.Log.Info("Using podman compose as compose command")
+				} else {
+					// If neither is available, warn and fall back to docker compose
+					c.Log.Warn("podman-compose not found, falling back to docker compose. Install podman-compose for better integration.")
+				}
+			}
+		}
+	} else {
+		// Docker engine (default)
+		if config.UserConfig.CommandTemplates.DockerCompose != "docker compose" {
+			return
+		}
 
-	// it's possible that a user is still using docker-compose, so we'll check if 'docker comopose' is available, and if not, we'll fall back to 'docker-compose'
-	err := c.OSCommand.RunCommand("docker compose version")
-	if err != nil {
-		config.UserConfig.CommandTemplates.DockerCompose = "docker-compose"
+		// it's possible that a user is still using docker-compose, so we'll check if 'docker compose' is available, and if not, we'll fall back to 'docker-compose'
+		err := c.OSCommand.RunCommand("docker compose version")
+		if err != nil {
+			config.UserConfig.CommandTemplates.DockerCompose = "docker-compose"
+			c.Log.Info("Using docker-compose as compose command")
+		}
 	}
 }
 
@@ -358,6 +504,37 @@ func (c *DockerCommand) DockerComposeConfig() string {
 		output = err.Error()
 	}
 	return output
+}
+
+// DetectContainerEngine checks if Docker or Podman is available and returns the detected engine
+// Returns "docker" or "podman" based on what's available, defaults to "docker" if both are available
+func DetectContainerEngine(osCommand *OSCommand) string {
+	// Check if Podman is available
+	isPodmanAvailable := osCommand.RunCommand("podman version") == nil
+	fmt.Printf("Podman available: %v\n", isPodmanAvailable)
+
+	// Check if Docker is available
+	isDockerAvailable := osCommand.RunCommand("docker version") == nil
+	fmt.Printf("Docker available: %v\n", isDockerAvailable)
+
+	// For macOS, check if podman machine is running 
+	if runtime.GOOS == "darwin" && isPodmanAvailable {
+		machineStatus, err := osCommand.RunCommandWithOutput("podman machine list --format json")
+		if err == nil && strings.Contains(machineStatus, "\"Running\":true") {
+			fmt.Println("Auto-detecting Podman on macOS with running machine")
+			return "podman"
+		}
+	}
+	
+	// If Podman is available but Docker is not, use Podman
+	if isPodmanAvailable && !isDockerAvailable {
+		fmt.Println("Auto-detecting Podman as container engine")
+		return "podman"
+	}
+	
+	// Default to Docker
+	fmt.Println("Auto-detecting Docker as container engine")
+	return "docker"
 }
 
 // determineDockerHost tries to the determine the docker host that we should connect to
